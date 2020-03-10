@@ -1,16 +1,14 @@
-(ns com.gearswithingears.async-sockets-test
-  (:import  [java.net Socket InetAddress])
-  (:require [clojure.test :refer :all]
+(ns org.dlacko.async-ipc-test
+  (:require [clojure.test :refer [deftest is]]
             [clojure.core.async :as async]
-            [clojure.tools.logging :as log]
-            [com.gearswithingears.async-sockets :refer :all]
+            [org.dlacko.async-ipc :as ipc]
             [clj-time.core :as time]))
 
-(def port (int 55555))
+(def id "test")
 
 (deftest test-server-in-out
-  (let [server      (socket-server port)
-        client-sock (socket-client port)
+  (let [server      (ipc/socket-server id)
+        client-sock (ipc/socket-client id)
         server-sock (async/<!! (:connections server))]
 
     (try
@@ -21,13 +19,12 @@
       (is (= "Pong" (async/<!! (:in client-sock))))
 
       (finally
-        (stop-socket-server server)
-        (close-socket-client client-sock)))
-    ))
+        (ipc/stop-socket-server server)
+        (ipc/close-socket-client client-sock)))))
 
 (deftest test-server-repeated-messages
-  (let [server      (socket-server port)
-        client-sock (socket-client port)
+  (let [server      (ipc/socket-server id)
+        client-sock (ipc/socket-client id)
         server-sock (async/<!! (:connections server))]
 
     (try
@@ -36,27 +33,26 @@
         (async/>! (:out client-sock) "Ping 2")
         (async/>! (:out client-sock) "Ping 3"))
 
-      (is (= "Ping 1") (async/<!! (:in server-sock)))
-      (is (= "Ping 2") (async/<!! (:in server-sock)))
-      (is (= "Ping 3") (async/<!! (:in server-sock)))
+      (is (= "Ping 1" (async/<!! (:in server-sock))))
+      (is (= "Ping 2" (async/<!! (:in server-sock))))
+      (is (= "Ping 3" (async/<!! (:in server-sock))))
 
       (async/go
         (async/>! (:out server-sock) "Pong 1")
         (async/>! (:out server-sock) "Pong 2")
         (async/>! (:out server-sock) "Pong 3"))
 
-      (is (= "Pong 1") (async/<!! (:in client-sock)))
-      (is (= "Pong 2") (async/<!! (:in client-sock)))
-      (is (= "Pong 3") (async/<!! (:in client-sock)))
+      (is (= "Pong 1" (async/<!! (:in client-sock))))
+      (is (= "Pong 2" (async/<!! (:in client-sock))))
+      (is (= "Pong 3" (async/<!! (:in client-sock))))
 
       (finally
-        (stop-socket-server server)
-        (close-socket-client client-sock)))
-    ))
+        (ipc/stop-socket-server server)
+        (ipc/close-socket-client client-sock)))))
 
 (deftest test-echo-server
-  (let [server      (socket-server port)
-        client-sock (socket-client port)
+  (let [server      (ipc/socket-server id)
+        client-sock (ipc/socket-client id)
         server-sock (async/<!! (:connections server))]
 
     (try
@@ -66,12 +62,11 @@
           (recur)))
 
       (async/>!! (:out client-sock) "Hello, I'm Guybrush Threepwood")
-      (is (= "ECHO: Hello, I'm Guybrush Threepwood") (async/<!! (:in client-sock)))
+      (is (= "ECHO: Hello, I'm Guybrush Threepwood" (async/<!! (:in client-sock))))
 
       (finally
-        (stop-socket-server server)
-        (close-socket-client client-sock)))
-    ))
+        (ipc/stop-socket-server server)
+        (ipc/close-socket-client client-sock)))))
 
 (defn receive-until-secs-elapsed [limit out-chan socket]
   (let [start-time (time/now)]
@@ -79,7 +74,7 @@
       (let [secs-elapsed (time/in-seconds (time/interval start-time (time/now)))
             msg (async/<! (:in socket))]
         (if (or (nil? msg) (= secs-elapsed limit))
-          (do (close-socket-client socket) (async/>! out-chan n))
+          (do (ipc/close-socket-client socket) (async/>! out-chan n))
           (recur (inc n)))))))
 
 (defn send-indefinitely [socket id]
@@ -89,8 +84,8 @@
     (recur (inc n))))
 
 (defn perftest-sockets [socket-count secs-limit]
-  (let [server        (socket-server port)
-        client-socks  (map socket-client (range socket-count))
+  (let [server        (ipc/socket-server id)
+        client-socks  (map ipc/socket-client (range socket-count))
         server-socks  (map (fn [_] (async/<!! (:connections server))) (range socket-count))
         limit-minutes (/ 60 secs-limit)
         out-chan      (async/chan socket-count)]
@@ -98,12 +93,12 @@
     (try
 
       (doall
-        (map-indexed
-          (fn [idx sock] (send-indefinitely sock idx))
-          client-socks))
+       (map-indexed
+        (fn [idx sock] (send-indefinitely sock idx))
+        client-socks))
 
       (doall
-        (map (partial receive-until-secs-elapsed secs-limit out-chan) server-socks))
+       (map (partial receive-until-secs-elapsed secs-limit out-chan) server-socks))
 
       (loop [n 0]
         (when (< n socket-count)
@@ -113,9 +108,5 @@
             (recur (inc n)))))
 
       (finally
-        (stop-socket-server server)
-        (doall (map close-socket-client client-socks))))
-
-    ))
-
-;(perftest-sockets 4 10)
+        (ipc/stop-socket-server server)
+        (doall (map ipc/close-socket-client client-socks))))))

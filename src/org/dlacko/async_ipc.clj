@@ -91,7 +91,7 @@
   ([id]
    (let [unix-socket-path (make-path id)
          socket-file (File. unix-socket-path)
-         socket ((AFUNIXSocket/newInstance))]
+         socket (AFUNIXSocket/newInstance)]
 
      (.connect socket (AFUNIXSocketAddress. socket-file))
      (init-async-socket socket unix-socket-path))))
