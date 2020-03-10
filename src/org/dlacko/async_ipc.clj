@@ -1,7 +1,8 @@
 (ns org.dlacko.async-ipc
   (:require [clojure.java.io :as io]
             [clojure.core.async :as async]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [cheshire.core :as json])
   (:import  [java.net Socket ServerSocket SocketException]
             [java.io File BufferedReader BufferedWriter]
             [org.newsclub.net.unix AFUNIXSocket AFUNIXServerSocket AFUNIXSocketAddress]))
@@ -68,16 +69,17 @@
         public-socket (map->AsyncSocket {:socket socket :address address :in in-ch :out out-ch})]
 
     (async/go-loop []
-      (let [line (socket-read-msg-or-nil socket in)]
-        (if-not line
+      (let [line (socket-read-msg-or-nil socket in)
+            msg (json/decode line true)]
+        (if-not msg
           (close-socket-client public-socket)
           (do
-            (async/>! in-ch line)
+            (async/>! in-ch msg)
             (recur)))))
 
     (async/go-loop []
       (let [line (and (socket-open? socket) (async/<! out-ch))]
-        (if-not (socket-write-msg socket out line)
+        (if-not (socket-write-msg socket out (json/encode line))
           (close-socket-client public-socket)
           (recur))))
 
