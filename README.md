@@ -1,6 +1,10 @@
 # clj-ipc
 
-A node-ipc compatible Clojure library for asynchronous inter-process communication.
+A node-ipc compatible Clojure library for asynchronous inter-process communication. It was forked
+from `bguthrie/async-sockets` and was modified to be able to handle unix domain sockets and to be
+compatible with node-ipc. However, the scope of the project is to handle all kind of inter-process
+communication, it currently handles unix/windows domain sockets only. It would be easy to add TCP/UDP
+support as well, if you need it, please request.
 
 ## Releases
 
@@ -47,16 +51,16 @@ To start an asynchronous socket server, which in this case echoes every input re
 (ns user
   (:require [async-sockets.core :refer :all]
             [clojure.core.async :as async]))
-   
+
 (defn echo-everything [socket]
   (async/go-loop []
     (when-let [line (async/<! (:in socket))]
       (async/>! (:out socket) (str "ECHO: " line))
       (recur))))
-   
+
 (let [server (socket-server 12345)]
   (async/go-loop []
-    (when-let [connection (async/<! (:connections server))] 
+    (when-let [connection (async/<! (:connections server))]
       (echo-everything connection)
       (recur))))
 ```
