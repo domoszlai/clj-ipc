@@ -46,7 +46,7 @@
     false))
 
 (defrecord AsyncSocket
-           [^Socket socket address in-ch out-ch])
+           [^Socket socket address in out])
 (defrecord AsyncSocketServer
            [^Integer backlog address ^ServerSocket server connections])
 
