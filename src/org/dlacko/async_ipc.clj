@@ -133,12 +133,14 @@
 
      (async/go-loop []
        (if (and (not (.isClosed java-server)) (.isBound java-server))
-         (try
-           (async/>! conns
-                     (init-async-socket (.accept java-server) unix-socket-path))
-           (catch SocketException e
-             (log/error e)
-             (stop-socket-server public-server)))
+         (do
+           (try
+             (async/>! conns
+                       (init-async-socket (.accept java-server) unix-socket-path))
+             (catch SocketException e
+               (log/error e)
+               (stop-socket-server public-server)))
+           (recur))
          (stop-socket-server public-server)))
 
      public-server)))
