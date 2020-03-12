@@ -21,8 +21,7 @@ support as well. Using Windows Sockets should be also possible. If you need any 
 This library permits the creation of IPC connections in idiomatic Clojure. It uses
 `clojure.core.async` channels for receiving and sending socket data but otherwise leans heavily on `java.net.Socket`
 and `java.net.ServerSocket` for most of the heavy lifting. It depends on `junixsocket` for
-using Unix Domain Sockets. The library uses JSON for message passing. The messages are separated by a from-feed
-character (`chr 12`, `\f`) to be compatible with `node-ipc`.
+using Unix Domain Sockets. The library uses JSON for message passing.
 
 The library currenty supports Unix Domain Socket connections only. Servers and clients are created by a string id,
 which is further extended into a file path using the `appspace` and `socketRoot` fields of the `config` map (`path = socketRoot + appspace + "." id`). The `create-server` function returns a record with a channel named `:connections`, which yields one `AsyncSocket` per incoming client connection. Clients are created with

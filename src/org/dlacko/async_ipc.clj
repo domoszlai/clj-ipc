@@ -8,8 +8,16 @@
             [org.newsclub.net.unix AFUNIXSocket AFUNIXServerSocket AFUNIXSocketAddress]))
 
 (def ^:dynamic config
-  {:appspace "app"
-   :socketRoot "/tmp/"})
+  {;; used for Unix Socket (Unix Domain Socket) namespacing. If not set specifically,
+   ;; the Unix Domain Socket will combine the socketRoot, appspace, and id to form the
+   ;; Unix Socket Path for creation or binding. This is available in case you have many
+   ;; apps running on your system, you may have several sockets with the same id, but if
+   ;; you change the appspace, you will still have app specic unique sockets.
+   :appspace "app"
+   ;; the directory in which to create or bind to a Unix Socket
+   :socketRoot "/tmp/"
+   ;; the delimiter at the end of each data packet.
+   :delimiter \formfeed})
 
 (defn- make-path
   [id]
@@ -18,19 +26,18 @@
 (defn- socket-open? [^Socket socket]
   (not (or (.isClosed socket) (.isInputShutdown socket) (.isOutputShutdown socket))))
 
-; node-ipc ends messages with a form-feed character
-(defn- read-until-form-feed
+(defn- read-data-packet
   [^BufferedReader in]
   (loop [chars []]
     (let [byte (.read in)]
-      (if (or (= byte -1) (= byte 12))
+      (if (or (= byte -1) (= byte (int (:delimeter config))))
         (apply str chars)
         (recur (conj chars (char byte)))))))
 
 (defn- socket-read-msg-or-nil [^Socket socket ^BufferedReader in]
   (when (socket-open? socket)
     (try
-      (read-until-form-feed in)
+      (read-data-packet in)
       (catch SocketException e
         (log/error e)))))
 
