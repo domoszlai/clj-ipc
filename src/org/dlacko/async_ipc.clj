@@ -4,7 +4,7 @@
             [clojure.tools.logging :as log]
             [cheshire.core :as json])
   (:import  [java.net Socket ServerSocket SocketException]
-            [java.io File BufferedReader BufferedWriter]
+            [java.io File BufferedReader InputStream OutputStream]
             [org.newsclub.net.unix AFUNIXSocket AFUNIXServerSocket AFUNIXSocketAddress]))
 
 (def ^:dynamic config
@@ -17,7 +17,10 @@
    ;; the directory in which to create or bind to a Unix Socket
    :socketRoot "/tmp/"
    ;; the delimiter at the end of each data packet.
-   :delimiter \formfeed})
+   :delimiter \formfeed
+   ;; if true, data will be sent and received as a raw node Buffer NOT an Object as JSON.
+   ;; This is great for Binary or hex IPC, and communicating with other processes in languages like C and C++
+   :rawBuffer	false})
 
 (defn- make-path
   [id]
@@ -26,27 +29,36 @@
 (defn- socket-open? [^Socket socket]
   (not (or (.isClosed socket) (.isInputShutdown socket) (.isOutputShutdown socket))))
 
-(defn- read-data-packet
+(defn- read-char-data-packet
   [^BufferedReader in]
-  (loop [chars []]
-    (let [byte (.read in)]
-      (if (or (= byte -1) (= byte (int (:delimiter config))))
-        (apply str chars)
-        (recur (conj chars (char byte)))))))
+  (let [delimiter (int (:delimiter config))
+        buffer (StringBuilder.)]
+    (loop []
+      (let [ichr (.read in)]
+        (if (or (= ichr -1) (= ichr delimiter))
+          (.toString buffer)
+          (do
+            (.append buffer (char ichr))
+            (recur)))))))
 
-(defn- socket-read-msg-or-nil [^Socket socket ^BufferedReader in]
+(defn- socket-read-object [^Socket socket ^InputStream is]
   (when (socket-open? socket)
     (try
-      (read-data-packet in)
+      (let [msg (read-char-data-packet (io/reader is))]
+        (if (> (count msg) 0)
+          (json/decode msg true)
+          nil))
       (catch SocketException e
         (log/error e)))))
 
-(defn- socket-write-msg [^Socket socket ^BufferedWriter out msg]
+(defn- socket-write-object [^Socket socket ^OutputStream os msg]
   (if (socket-open? socket)
     (try
-      (.write out (str msg "\f"))
-      (when *flush-on-newline* (.flush out))
-      true
+      (let [out (io/writer os)]
+        (.write out (json/encode msg))
+        (.write out (int (:delimiter config)))
+        (when *flush-on-newline* (.flush out))
+        true)
       (catch SocketException e
         (log/error e)
         false))
@@ -69,15 +81,14 @@
   (assoc this :socket nil :in nil :out nil))
 
 (defn- init-async-socket [^Socket socket address]
-  (let [^BufferedReader in (io/reader socket)
-        ^BufferedWriter out (io/writer socket)
+  (let [^InputStream is (io/input-stream socket)
+        ^OutputStream os (io/output-stream socket)
         in-ch (async/chan)
         out-ch (async/chan)
         public-socket (map->AsyncSocket {:socket socket :address address :in in-ch :out out-ch})]
 
     (async/go-loop []
-      (let [line (socket-read-msg-or-nil socket in)
-            msg (json/decode line true)]
+      (let [msg (socket-read-object socket is)]
         (if-not msg
           (close-socket-client public-socket)
           (do
@@ -85,8 +96,8 @@
             (recur)))))
 
     (async/go-loop []
-      (let [line (and (socket-open? socket) (async/<! out-ch))]
-        (if-not (socket-write-msg socket out (json/encode line))
+      (let [msg (and (socket-open? socket) (async/<! out-ch))]
+        (if-not (socket-write-object socket os msg)
           (close-socket-client public-socket)
           (recur))))
 
