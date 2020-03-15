@@ -8,5 +8,4 @@
                  [com.kohlschutter.junixsocket/junixsocket-core "2.3.2"]
                  [cheshire "5.10.0"]]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.1"]
-                                  [clj-time "0.8.0"]]
-                   :global-vars {*warn-on-reflection* true}}})
+                                  [clj-time "0.8.0"]]}})

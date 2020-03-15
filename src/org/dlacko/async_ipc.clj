@@ -4,7 +4,7 @@
             [clojure.tools.logging :as log]
             [cheshire.core :as json])
   (:import  [java.net Socket ServerSocket SocketException]
-            [java.io File BufferedReader InputStream OutputStream]
+            [java.io File BufferedReader InputStream OutputStream ByteArrayOutputStream]
             [org.newsclub.net.unix AFUNIXSocket AFUNIXServerSocket AFUNIXSocketAddress]))
 
 (def ^:dynamic config
@@ -29,7 +29,7 @@
 (defn- socket-open? [^Socket socket]
   (not (or (.isClosed socket) (.isInputShutdown socket) (.isOutputShutdown socket))))
 
-(defn- read-char-data-packet
+(defn- read-object-data-packet
   [^BufferedReader in]
   (let [delimiter (int (:delimiter config))
         buffer (StringBuilder.)]
@@ -41,12 +41,36 @@
             (.append buffer (char ichr))
             (recur)))))))
 
+(defn- read-raw-data-packet
+  [^InputStream in]
+  (let [buffer (ByteArrayOutputStream.)
+        read-buf (byte-array 1000)]
+    (loop [read 0]
+      (if (and (> read 0) (= 0 (.available in)))
+        (.toByteArray buffer)
+        (let [nrbytes (.read in read-buf)]
+          (if (< nrbytes 1)
+            (.toByteArray buffer)
+            (do
+              (.write buffer read-buf 0 nrbytes)
+              (recur (+ read nrbytes)))))))))
+
 (defn- socket-read-object [^Socket socket ^InputStream is]
   (when (socket-open? socket)
     (try
-      (let [msg (read-char-data-packet (io/reader is))]
+      (let [msg (read-object-data-packet (io/reader is))]
         (if (> (count msg) 0)
           (json/decode msg true)
+          nil))
+      (catch SocketException e
+        (log/error e)))))
+
+(defn- socket-read-bytes [^Socket socket ^InputStream is]
+  (when (socket-open? socket)
+    (try
+      (let [bytes (read-raw-data-packet is)]
+        (if (> (count bytes) 0)
+          bytes
           nil))
       (catch SocketException e
         (log/error e)))))
@@ -57,8 +81,19 @@
       (let [out (io/writer os)]
         (.write out (json/encode msg))
         (.write out (int (:delimiter config)))
-        (when *flush-on-newline* (.flush out))
+        (.flush out)
         true)
+      (catch SocketException e
+        (log/error e)
+        false))
+    false))
+
+(defn- socket-write-bytes [^Socket socket ^OutputStream os bytes]
+  (if (socket-open? socket)
+    (try
+      (.write os bytes)
+      (.flush os)
+      true
       (catch SocketException e
         (log/error e)
         false))
@@ -88,7 +123,9 @@
         public-socket (map->AsyncSocket {:socket socket :address address :in in-ch :out out-ch})]
 
     (async/go-loop []
-      (let [msg (socket-read-object socket is)]
+      (let [msg (if (:rawBuffer config)
+                  (socket-read-bytes socket is)
+                  (socket-read-object socket is))]
         (if-not msg
           (close-socket-client public-socket)
           (do
@@ -97,7 +134,9 @@
 
     (async/go-loop []
       (let [msg (and (socket-open? socket) (async/<! out-ch))]
-        (if-not (socket-write-object socket os msg)
+        (if-not (if (:rawBuffer config)
+                  (socket-write-bytes socket os msg)
+                  (socket-write-object socket os msg))
           (close-socket-client public-socket)
           (recur))))
 
@@ -107,7 +146,7 @@
 (defn socket-client
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
    Given a string id of the socket being connected to, returns an AsyncSocket which must be explicitly
-   started and stopped by the consumer. Observes value of *flush-on-newline* var for purposes of socket flushing."
+   started and stopped by the consumer."
   ([id]
    (let [unix-socket-path (make-path id)
          socket-file (File. unix-socket-path)
@@ -130,8 +169,7 @@
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
    Given a string id of the socket being connected to and optional backlog (the maximum queue
    length of incoming connection indications, 50 by default), starts and returns a socket server
-   and a :connections channel that yields a new socket client on each connection.
-   Observes value of *flush-on-newline* var for purposes of socket flushing."
+   and a :connections channel that yields a new socket client on each connection."
   ([id]
    (socket-server id default-server-backlog))
   ([id backlog]
