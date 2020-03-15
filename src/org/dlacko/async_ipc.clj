@@ -30,7 +30,7 @@
   [^BufferedReader in]
   (loop [chars []]
     (let [byte (.read in)]
-      (if (or (= byte -1) (= byte (int (:delimeter config))))
+      (if (or (= byte -1) (= byte (int (:delimiter config))))
         (apply str chars)
         (recur (conj chars (char byte)))))))
 
