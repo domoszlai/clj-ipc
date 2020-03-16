@@ -20,7 +20,11 @@
    :delimiter \formfeed
    ;; if true, data will be sent and received as a raw node Buffer NOT an Object as JSON.
    ;; This is great for Binary or hex IPC, and communicating with other processes in languages like C and C++
-   :rawBuffer	false})
+   :rawBuffer	false
+   ;; the maximum queue length of incoming connection indications
+   :backlog 50
+   ;; buffer size for receiving data when rawBuffer is true
+   :buffer-size 8192})
 
 (defn- make-path
   [id]
@@ -41,19 +45,31 @@
             (.append buffer (char ichr))
             (recur)))))))
 
+(defn- combine-buffers
+  [bufs total-len]
+  (let [result (byte-array total-len)]
+    (loop [[buf & rest] bufs
+           remaining total-len]
+      (if (> remaining 0)
+        (let [bytes-to-copy (min remaining (count buf))
+              offset (- total-len remaining)]
+          (System/arraycopy buf 0 result offset bytes-to-copy)
+          (recur rest (- remaining bytes-to-copy)))
+        result))))
+
 (defn- read-raw-data-packet
   [^InputStream in]
-  (let [buffer (ByteArrayOutputStream.)
-        read-buf (byte-array 1000)]
-    (loop [read 0]
-      (if (and (> read 0) (= 0 (.available in)))
-        (.toByteArray buffer)
-        (let [nrbytes (.read in read-buf)]
-          (if (< nrbytes 1)
-            (.toByteArray buffer)
-            (do
-              (.write buffer read-buf 0 nrbytes)
-              (recur (+ read nrbytes)))))))))
+  (loop [bufs []
+         buf-size (:buffer-size config)
+         total-len 0]
+    (if (and (> total-len 0) (= 0 (.available in)))
+      (combine-buffers bufs total-len)
+      (let [buf (byte-array buf-size)
+            bufs (conj bufs buf)
+            r (.read in buf)]
+        (if (< r buf-size)
+          (combine-buffers bufs (+ total-len (max 0 r)))
+          (recur bufs (* 2 buf-size) (+ total-len buf-size)))))))
 
 (defn- socket-read-object [^Socket socket ^InputStream is]
   (when (socket-open? socket)
@@ -102,9 +118,7 @@
 (defrecord AsyncSocket
            [^Socket socket address in out])
 (defrecord AsyncSocketServer
-           [^Integer backlog address ^ServerSocket server connections])
-
-(def ^Integer default-server-backlog 50) ;; derived from SocketServer.java
+           [^ServerSocket server address connections])
 
 (defn close-socket-client [{:keys [in out socket address] :as this}]
   (log/info "Closing async socket on address" address)
@@ -167,36 +181,32 @@
 
 (defn socket-server
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
-   Given a string id of the socket being connected to and optional backlog (the maximum queue
-   length of incoming connection indications, 50 by default), starts and returns a socket server
+   Given a string id of the socket being connected to, starts and returns a socket server
    and a :connections channel that yields a new socket client on each connection."
-  ([id]
-   (socket-server id default-server-backlog))
-  ([id backlog]
-   (let [unix-socket-path (make-path id)
-         socket-file (File. unix-socket-path)
-         java-server (AFUNIXServerSocket/newInstance)
-         conns (async/chan backlog)
-         public-server (map->AsyncSocketServer
-                        {:backlog     (int backlog)
-                         :address     unix-socket-path
-                         :connections conns
-                         :server      java-server})]
+  [id]
+  (let [unix-socket-path (make-path id)
+        socket-file (File. unix-socket-path)
+        java-server (AFUNIXServerSocket/newInstance)
+        conns (async/chan (:backlog config))
+        public-server (map->AsyncSocketServer
+                       {:address     unix-socket-path
+                        :connections conns
+                        :server      java-server})]
 
-     (.bind java-server (AFUNIXSocketAddress. socket-file))
+    (.bind java-server (AFUNIXSocketAddress. socket-file))
 
-     (log/info "Starting async socket server on address" unix-socket-path)
+    (log/info "Starting async socket server on address" unix-socket-path)
 
-     (async/go-loop []
-       (if (and (not (.isClosed java-server)) (.isBound java-server))
-         (do
-           (try
-             (async/>! conns
-                       (init-async-socket (.accept java-server) unix-socket-path))
-             (catch SocketException e
-               (log/error e)
-               (stop-socket-server public-server)))
-           (recur))
-         (stop-socket-server public-server)))
+    (async/go-loop []
+      (if (and (not (.isClosed java-server)) (.isBound java-server))
+        (do
+          (try
+            (async/>! conns
+                      (init-async-socket (.accept java-server) unix-socket-path))
+            (catch SocketException e
+              (log/error e)
+              (stop-socket-server public-server)))
+          (recur))
+        (stop-socket-server public-server)))
 
-     public-server)))
+    public-server))
