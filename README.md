@@ -8,13 +8,8 @@ support as well. Using Windows Sockets should be also possible. If you need any 
 
 ## Releases
 
-`clj-ipc` is published to [clojars.org](https://clojars.org). The latest stable release is `0.1.0`.
-
-[Leiningen](http://leiningen.org) dependency information:
-
-```
-[org.dlacko/clj-ipc "0.1.0"]
-```
+`clj-ipc` is work in progress. Will be released to [clojars.org](https://clojars.org) as soon 
+as it is in production ready state.
 
 ## Usage
 
