@@ -5,6 +5,7 @@
             [cheshire.core :as json])
   (:import  [java.net Socket ServerSocket SocketException]
             [java.io File BufferedReader InputStream OutputStream ByteArrayOutputStream]
+            [java.util Arrays]
             [org.newsclub.net.unix AFUNIXSocket AFUNIXServerSocket AFUNIXSocketAddress]))
 
 (def ^:dynamic config
@@ -23,8 +24,8 @@
    :rawBuffer	false
    ;; the maximum queue length of incoming connection indications
    :backlog 50
-   ;; buffer size for receiving data when rawBuffer is true
-   :buffer-size 8192})
+   ;; maximum amount of bytes receiving at once when rawBuffer is true
+   :max-buffer-size 8192})
 
 (defn- make-path
   [id]
@@ -45,31 +46,18 @@
             (.append buffer (char ichr))
             (recur)))))))
 
-(defn- combine-buffers
-  [bufs total-len]
-  (let [result (byte-array total-len)]
-    (loop [[buf & rest] bufs
-           remaining total-len]
-      (if (> remaining 0)
-        (let [bytes-to-copy (min remaining (count buf))
-              offset (- total-len remaining)]
-          (System/arraycopy buf 0 result offset bytes-to-copy)
-          (recur rest (- remaining bytes-to-copy)))
-        result))))
-
 (defn- read-raw-data-packet
   [^InputStream in]
-  (loop [bufs []
-         buf-size (:buffer-size config)
-         total-len 0]
-    (if (and (> total-len 0) (= 0 (.available in)))
-      (combine-buffers bufs total-len)
-      (let [buf (byte-array buf-size)
-            bufs (conj bufs buf)
-            r (.read in buf)]
-        (if (< r buf-size)
-          (combine-buffers bufs (+ total-len (max 0 r)))
-          (recur bufs (* 2 buf-size) (+ total-len buf-size)))))))
+  (let [avail (.available in)
+        buf-size (if (= 0 avail)
+                   (:max-buffer-size config)
+                   (min avail (:max-buffer-size config)))
+        buf (byte-array buf-size)
+        r (.read in buf)]
+    (cond
+      (= r -1) nil
+      (= r buf-size) buf
+      :else (Arrays/copyOf buf r))))
 
 (defn- socket-read-object [^Socket socket ^InputStream is]
   (when (socket-open? socket)
@@ -120,7 +108,7 @@
 (defrecord AsyncSocketServer
            [^ServerSocket server address connections])
 
-(defn close-socket-client [{:keys [in out socket address] :as this}]
+(defn disconnect [{:keys [in out socket address] :as this}]
   (log/info "Closing async socket on address" address)
   (when-not (.isInputShutdown socket)  (.shutdownInput socket))
   (when-not (.isOutputShutdown socket) (.shutdownOutput socket))
@@ -141,7 +129,7 @@
                   (socket-read-bytes socket is)
                   (socket-read-object socket is))]
         (if-not msg
-          (close-socket-client public-socket)
+          (disconnect public-socket)
           (do
             (async/>! in-ch msg)
             (recur)))))
@@ -151,13 +139,13 @@
         (if-not (if (:rawBuffer config)
                   (socket-write-bytes socket os msg)
                   (socket-write-object socket os msg))
-          (close-socket-client public-socket)
+          (disconnect public-socket)
           (recur))))
 
     (log/info "New async socket opened on address" address)
     public-socket))
 
-(defn socket-client
+(defn connect-to
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
    Given a string id of the socket being connected to, returns an AsyncSocket which must be explicitly
    started and stopped by the consumer."
@@ -172,14 +160,14 @@
 (defn server-running? [{:keys [^ServerSocket server]}]
   (and server (not (.isClosed server))))
 
-(defn stop-socket-server [{:keys [^ServerSocket server connections address] :as this}]
+(defn stop-server [{:keys [^ServerSocket server connections address] :as this}]
   (when (server-running? this)
     (log/info "Stopping async socket server on address" address)
     (async/close! connections)
     (.close server)
     (assoc this :server nil :connections nil)))
 
-(defn socket-server
+(defn serve
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
    Given a string id of the socket being connected to, starts and returns a socket server
    and a :connections channel that yields a new socket client on each connection."
@@ -205,8 +193,8 @@
                       (init-async-socket (.accept java-server) unix-socket-path))
             (catch SocketException e
               (log/error e)
-              (stop-socket-server public-server)))
+              (stop-server public-server)))
           (recur))
-        (stop-socket-server public-server)))
+        (stop-server public-server)))
 
     public-server))

@@ -7,8 +7,8 @@
 (def id "test")
 
 (deftest test-server-in-out
-  (let [server      (ipc/socket-server id)
-        client-sock (ipc/socket-client id)
+  (let [server      (ipc/serve id)
+        client-sock (ipc/connect-to id)
         server-sock (async/<!! (:connections server))]
 
     (try
@@ -19,12 +19,12 @@
       (is (= "Pong" (async/<!! (:in client-sock))))
 
       (finally
-        (ipc/stop-socket-server server)
-        (ipc/close-socket-client client-sock)))))
+        (ipc/stop-server server)
+        (ipc/disconnect client-sock)))))
 
 (deftest test-server-repeated-messages
-  (let [server      (ipc/socket-server id)
-        client-sock (ipc/socket-client id)
+  (let [server      (ipc/serve id)
+        client-sock (ipc/connect-to id)
         server-sock (async/<!! (:connections server))]
 
     (try
@@ -47,12 +47,12 @@
       (is (= "Pong 3" (async/<!! (:in client-sock))))
 
       (finally
-        (ipc/stop-socket-server server)
-        (ipc/close-socket-client client-sock)))))
+        (ipc/stop-server server)
+        (ipc/disconnect client-sock)))))
 
 (deftest test-echo-server
-  (let [server      (ipc/socket-server id)
-        client-sock (ipc/socket-client id)
+  (let [server      (ipc/serve id)
+        client-sock (ipc/connect-to id)
         server-sock (async/<!! (:connections server))]
 
     (try
@@ -65,8 +65,8 @@
       (is (= "ECHO: Hello, I'm Guybrush Threepwood" (async/<!! (:in client-sock))))
 
       (finally
-        (ipc/stop-socket-server server)
-        (ipc/close-socket-client client-sock)))))
+        (ipc/stop-server server)
+        (ipc/disconnect client-sock)))))
 
 (defn receive-until-secs-elapsed [limit out-chan socket]
   (let [start-time (time/now)]
@@ -74,7 +74,7 @@
       (let [secs-elapsed (time/in-seconds (time/interval start-time (time/now)))
             msg (async/<! (:in socket))]
         (if (or (nil? msg) (= secs-elapsed limit))
-          (do (ipc/close-socket-client socket) (async/>! out-chan n))
+          (do (ipc/disconnect socket) (async/>! out-chan n))
           (recur (inc n)))))))
 
 (defn send-indefinitely [socket id]
@@ -84,8 +84,8 @@
     (recur (inc n))))
 
 (defn perftest-sockets [socket-count secs-limit]
-  (let [server        (ipc/socket-server id)
-        client-socks  (map ipc/socket-client (range socket-count))
+  (let [server        (ipc/serve id)
+        client-socks  (map ipc/connect-to (range socket-count))
         server-socks  (map (fn [_] (async/<!! (:connections server))) (range socket-count))
         limit-minutes (/ 60 secs-limit)
         out-chan      (async/chan socket-count)]
@@ -108,5 +108,5 @@
             (recur (inc n)))))
 
       (finally
-        (ipc/stop-socket-server server)
-        (doall (map ipc/close-socket-client client-socks))))))
+        (ipc/stop-server server)
+        (doall (map ipc/disconnect client-socks))))))
