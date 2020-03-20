@@ -1,10 +1,11 @@
 (ns org.dlacko.async-ipc
   (:require [clojure.java.io :as io]
             [clojure.core.async :as async]
+            [clojure.core.async.impl.protocols]
             [clojure.tools.logging :as log]
             [cheshire.core :as json])
   (:import  [java.net Socket ServerSocket SocketException]
-            [java.io File BufferedReader InputStream OutputStream ByteArrayOutputStream]
+            [java.io File BufferedReader InputStream OutputStream]
             [java.util Arrays]
             [org.newsclub.net.unix AFUNIXSocket AFUNIXServerSocket AFUNIXSocketAddress]))
 
@@ -59,49 +60,27 @@
       (= r buf-size) buf
       :else (Arrays/copyOf buf r))))
 
-(defn- socket-read-object [^Socket socket ^InputStream is]
-  (when (socket-open? socket)
-    (try
-      (let [msg (read-object-data-packet (io/reader is))]
-        (if (> (count msg) 0)
-          (json/decode msg true)
-          nil))
-      (catch SocketException e
-        (log/error e)))))
+(defn- socket-read-object [^BufferedReader in]
+  (let [msg (read-object-data-packet in)]
+    (if (> (count msg) 0)
+      (json/decode msg true)
+      nil)))
 
-(defn- socket-read-bytes [^Socket socket ^InputStream is]
-  (when (socket-open? socket)
-    (try
-      (let [bytes (read-raw-data-packet is)]
-        (if (> (count bytes) 0)
-          bytes
-          nil))
-      (catch SocketException e
-        (log/error e)))))
+(defn- socket-read-bytes [^InputStream is]
+  (let [bytes (read-raw-data-packet is)]
+    (if (> (count bytes) 0)
+      bytes
+      nil)))
 
-(defn- socket-write-object [^Socket socket ^OutputStream os msg]
-  (if (socket-open? socket)
-    (try
-      (let [out (io/writer os)]
-        (.write out (json/encode msg))
-        (.write out (int (:delimiter config)))
-        (.flush out)
-        true)
-      (catch SocketException e
-        (log/error e)
-        false))
-    false))
+(defn- socket-write-object [^OutputStream os msg]
+  (let [out (io/writer os)]
+    (.write out (json/encode msg))
+    (.write out (int (:delimiter config)))
+    (.flush out)))
 
-(defn- socket-write-bytes [^Socket socket ^OutputStream os bytes]
-  (if (socket-open? socket)
-    (try
-      (.write os bytes)
-      (.flush os)
-      true
-      (catch SocketException e
-        (log/error e)
-        false))
-    false))
+(defn- socket-write-bytes [^OutputStream os bytes]
+  (.write os bytes)
+  (.flush os))
 
 (defrecord AsyncSocket
            [^Socket socket address in out])
@@ -109,12 +88,15 @@
            [^ServerSocket server address connections])
 
 (defn disconnect [{:keys [in out socket address] :as this}]
-  (log/info "Closing async socket on address" address)
-  (when-not (.isInputShutdown socket)  (.shutdownInput socket))
-  (when-not (.isOutputShutdown socket) (.shutdownOutput socket))
-  (when-not (.isClosed socket)         (.close socket))
+  (log/info "Closing async socket client on address" address)
   (async/close! in)
   (async/close! out)
+  (when-not (.isInputShutdown socket)
+    (try (.shutdownInput socket) (catch Exception _)))
+  (when-not (.isOutputShutdown socket)
+    (try (.shutdownOutput socket) (catch Exception _)))
+  (when-not (.isClosed socket)
+    (try (.close socket) (catch Exception _)))
   (assoc this :socket nil :in nil :out nil))
 
 (defn- init-async-socket [^Socket socket address]
@@ -124,25 +106,35 @@
         out-ch (async/chan)
         public-socket (map->AsyncSocket {:socket socket :address address :in in-ch :out out-ch})]
 
-    (async/go-loop []
-      (let [msg (if (:rawBuffer config)
-                  (socket-read-bytes socket is)
-                  (socket-read-object socket is))]
-        (if-not msg
-          (disconnect public-socket)
-          (do
-            (async/>! in-ch msg)
-            (recur)))))
+    (let [read-msg (if (:rawBuffer config)
+                     #(socket-read-bytes is)
+                     (partial socket-read-object (io/reader is)))]
+      (async/go-loop []
+        (let [msg (try
+                    (read-msg)
+                    (catch SocketException e
+                      (log/error (str "Error occured during read on address " address) e)))]
+          (if-not msg
+            ; If conns is closed, shutdown was explicit by disconnect
+            (when-not (clojure.core.async.impl.protocols/closed? in-ch)
+              (disconnect public-socket))
+            (do
+              (async/>! in-ch msg)
+              (recur))))))
 
     (async/go-loop []
-      (let [msg (and (socket-open? socket) (async/<! out-ch))]
-        (if-not (if (:rawBuffer config)
-                  (socket-write-bytes socket os msg)
-                  (socket-write-object socket os msg))
-          (disconnect public-socket)
+      (let [msg (async/<! out-ch)]
+        (when (and msg (socket-open? socket))
+          (try
+            (if (:rawBuffer config)
+              (socket-write-bytes os msg)
+              (socket-write-object os msg))
+            (catch SocketException e
+              (log/error (str "Error occured during write on address " address) e)
+              (disconnect public-socket)))
           (recur))))
 
-    (log/info "New async socket opened on address" address)
+    (log/info "New async socket client opened on address" address)
     public-socket))
 
 (defn connect-to
@@ -164,7 +156,9 @@
   (when (server-running? this)
     (log/info "Stopping async socket server on address" address)
     (async/close! connections)
-    (.close server)
+    (try
+      (.close server)
+      (catch Exception _))
     (assoc this :server nil :connections nil)))
 
 (defn serve
@@ -186,15 +180,18 @@
     (log/info "Starting async socket server on address" unix-socket-path)
 
     (async/go-loop []
-      (if (and (not (.isClosed java-server)) (.isBound java-server))
-        (do
-          (try
-            (async/>! conns
-                      (init-async-socket (.accept java-server) unix-socket-path))
-            (catch SocketException e
-              (log/error e)
-              (stop-server public-server)))
-          (recur))
-        (stop-server public-server)))
+      (when
+       (try
+         ; >! returns true if succeeds
+         (async/>! conns
+                   (init-async-socket (.accept java-server) unix-socket-path))
+         (catch SocketException e
+           ; If conns is closed, shutdown was explicit by stop-server
+           (when-not (clojure.core.async.impl.protocols/closed? conns)
+             (log/error "Error occured on the server" e)
+             (try
+               (stop-server public-server)
+               (catch Exception _)))))
+        (recur)))
 
     public-server))
