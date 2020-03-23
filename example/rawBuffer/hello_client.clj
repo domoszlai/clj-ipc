@@ -3,6 +3,8 @@
             [clojure.tools.logging :as log]
             [org.dlacko.async-ipc :as ipc]))
 
+;; Compatibe with https://github.com/RIAEvangelist/node-ipc/blob/master/example/unixWindowsSocket/rawBuffer/world.server.js
+
 (defn to-bytes
   [str]
   (bytes (byte-array (map (comp byte int) str))))
