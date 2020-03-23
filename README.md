@@ -13,8 +13,11 @@ than a handful of connections to deal with.
 
 ## Releases
 
-Will be released to [clojars.org](https://clojars.org) as soon
-as it is in production ready state.
+It is released to [clojars.org](https://clojars.org) for testing purposes.
+
+Dependency information:
+
+https://clojars.org/org.dlacko/clj-ipc
 
 ## Usage
 
