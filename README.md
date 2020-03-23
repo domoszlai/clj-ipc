@@ -17,7 +17,7 @@ It is released to [clojars.org](https://clojars.org) for testing purposes.
 
 Dependency information:
 
-https://clojars.org/org.dlacko/clj-ipc
+[![Clojars Project](https://img.shields.io/clojars/v/org.dlacko/clj-ipc.svg)](https://clojars.org/org.dlacko/clj-ipc)
 
 ## Usage
 
