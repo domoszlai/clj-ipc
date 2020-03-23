@@ -1,4 +1,4 @@
-(defproject org.dlacko/async-unix-sockets "0.1.0"
+(defproject org.dlacko/async-unix-sockets "0.0.1-SNAPSHOT"
   :description "A node-ipc compatible Clojure library for working with Unix Domain Sockets using core.async channels."
   :url "https://github.com/domoszlai/clj-ipc"
   :license {:name "The MIT License"
