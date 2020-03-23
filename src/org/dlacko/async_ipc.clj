@@ -141,13 +141,14 @@
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
    Given a string id of the socket being connected to, returns an AsyncSocket which must be explicitly
    started and stopped by the consumer."
-  ([id]
-   (let [unix-socket-path (make-path id)
-         socket-file (File. unix-socket-path)
-         socket (AFUNIXSocket/newInstance)]
+  [id & {:as options}]
+  (with-bindings {#'config (merge config options)}
+    (let [unix-socket-path (make-path id)
+          socket-file (File. unix-socket-path)
+          socket (AFUNIXSocket/newInstance)]
 
-     (.connect socket (AFUNIXSocketAddress. socket-file))
-     (init-async-socket socket unix-socket-path))))
+      (.connect socket (AFUNIXSocketAddress. socket-file))
+      (init-async-socket socket unix-socket-path))))
 
 (defn server-running? [{:keys [^ServerSocket server]}]
   (and server (not (.isClosed server))))
@@ -165,34 +166,35 @@
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
    Given a string id of the socket being connected to, starts and returns a socket server
    and a :connections channel that yields a new socket client on each connection."
-  [id]
-  (let [unix-socket-path (make-path id)
-        socket-file (File. unix-socket-path)
-        java-server (AFUNIXServerSocket/newInstance)
-        conns (async/chan)
-        public-server (map->AsyncSocketServer
-                       {:address     unix-socket-path
-                        :connections conns
-                        :server      java-server})]
+  [id & {:as options}]
+  (with-bindings {#'config (merge config options)}
+    (let [unix-socket-path (make-path id)
+          socket-file (File. unix-socket-path)
+          java-server (AFUNIXServerSocket/newInstance)
+          conns (async/chan)
+          public-server (map->AsyncSocketServer
+                         {:address     unix-socket-path
+                          :connections conns
+                          :server      java-server})]
 
-    (.bind java-server (AFUNIXSocketAddress. socket-file))
+      (.bind java-server (AFUNIXSocketAddress. socket-file))
 
-    (log/info "Starting async socket server on address" unix-socket-path)
+      (log/info "Starting async socket server on address" unix-socket-path)
 
-    (async/thread
-      (loop []
-        (when
-         (try
-           ; >!! returns true if succeeds
-           (async/>!! conns
-                      (init-async-socket (.accept java-server) unix-socket-path))
-           (catch SocketException e
-             ; If conns is closed, shutdown was explicit by stop-server
-             (when-not (clojure.core.async.impl.protocols/closed? conns)
-               (log/error "Error occured on the server" e)
-               (try
-                 (stop-server public-server)
-                 (catch Exception _)))))
-          (recur))))
+      (async/thread
+        (loop []
+          (when
+           (try
+             ; >!! returns true if succeeds
+             (async/>!! conns
+                        (init-async-socket (.accept java-server) unix-socket-path))
+             (catch SocketException e
+               ; If conns is closed, shutdown was explicit by stop-server
+               (when-not (clojure.core.async.impl.protocols/closed? conns)
+                 (log/error "Error occured on the server" e)
+                 (try
+                   (stop-server public-server)
+                   (catch Exception _)))))
+            (recur))))
 
-    public-server))
+      public-server)))
