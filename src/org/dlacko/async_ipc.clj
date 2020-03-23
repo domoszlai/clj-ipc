@@ -23,8 +23,6 @@
    ;; if true, data will be sent and received as a raw node Buffer NOT an Object as JSON.
    ;; This is great for Binary or hex IPC, and communicating with other processes in languages like C and C++
    :rawBuffer	false
-   ;; the maximum queue length of incoming connection indications
-   :backlog 50
    ;; maximum amount of bytes receiving at once when rawBuffer is true
    :max-buffer-size 8192})
 
@@ -109,30 +107,32 @@
     (let [read-msg (if (:rawBuffer config)
                      #(socket-read-bytes is)
                      (partial socket-read-object (io/reader is)))]
-      (async/go-loop []
-        (let [msg (try
-                    (read-msg)
-                    (catch SocketException e
-                      (log/error (str "Error occured during read on address " address) e)))]
-          (if-not msg
-            ; If conns is closed, shutdown was explicit by disconnect
-            (when-not (clojure.core.async.impl.protocols/closed? in-ch)
-              (disconnect public-socket))
-            (do
-              (async/>! in-ch msg)
-              (recur))))))
+      (async/thread
+        (loop []
+          (let [msg (try
+                      (read-msg)
+                      (catch SocketException e
+                        (log/error (str "Error occured during read on address " address) e)))]
+            (if-not msg
+              ; If conns is closed, shutdown was explicit by disconnect
+              (when-not (clojure.core.async.impl.protocols/closed? in-ch)
+                (disconnect public-socket))
+              (do
+                (async/>!! in-ch msg)
+                (recur)))))))
 
-    (async/go-loop []
-      (let [msg (async/<! out-ch)]
-        (when (and msg (socket-open? socket))
-          (try
-            (if (:rawBuffer config)
-              (socket-write-bytes os msg)
-              (socket-write-object os msg))
-            (catch SocketException e
-              (log/error (str "Error occured during write on address " address) e)
-              (disconnect public-socket)))
-          (recur))))
+    (async/thread
+      (loop []
+        (let [msg (async/<!! out-ch)]
+          (when (and msg (socket-open? socket))
+            (try
+              (if (:rawBuffer config)
+                (socket-write-bytes os msg)
+                (socket-write-object os msg))
+              (catch SocketException e
+                (log/error (str "Error occured during write on address " address) e)
+                (disconnect public-socket)))
+            (recur)))))
 
     (log/info "New async socket client opened on address" address)
     public-socket))
@@ -169,7 +169,7 @@
   (let [unix-socket-path (make-path id)
         socket-file (File. unix-socket-path)
         java-server (AFUNIXServerSocket/newInstance)
-        conns (async/chan (:backlog config))
+        conns (async/chan)
         public-server (map->AsyncSocketServer
                        {:address     unix-socket-path
                         :connections conns
@@ -179,19 +179,20 @@
 
     (log/info "Starting async socket server on address" unix-socket-path)
 
-    (async/go-loop []
-      (when
-       (try
-         ; >! returns true if succeeds
-         (async/>! conns
-                   (init-async-socket (.accept java-server) unix-socket-path))
-         (catch SocketException e
-           ; If conns is closed, shutdown was explicit by stop-server
-           (when-not (clojure.core.async.impl.protocols/closed? conns)
-             (log/error "Error occured on the server" e)
-             (try
-               (stop-server public-server)
-               (catch Exception _)))))
-        (recur)))
+    (async/thread
+      (loop []
+        (when
+         (try
+           ; >!! returns true if succeeds
+           (async/>!! conns
+                      (init-async-socket (.accept java-server) unix-socket-path))
+           (catch SocketException e
+             ; If conns is closed, shutdown was explicit by stop-server
+             (when-not (clojure.core.async.impl.protocols/closed? conns)
+               (log/error "Error occured on the server" e)
+               (try
+                 (stop-server public-server)
+                 (catch Exception _)))))
+          (recur))))
 
     public-server))
