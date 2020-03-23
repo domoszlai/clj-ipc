@@ -3,9 +3,8 @@
   :url "https://github.com/domoszlai/clj-ipc"
   :license {:name "The MIT License"
             :url "http://opensource.org/licenses/MIT"}
-  :dependencies [[org.clojure/core.async "1.0.567"]
+  :dependencies [[org.clojure/clojure "1.10.1"]
+                 [org.clojure/core.async "1.0.567"]
                  [org.clojure/tools.logging "1.0.0"]
                  [com.kohlschutter.junixsocket/junixsocket-core "2.3.2"]
-                 [cheshire "5.10.0"]]
-  :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.1"]
-                                  [clj-time "0.8.0"]]}})
+                 [cheshire "5.10.0"]])
