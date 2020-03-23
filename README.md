@@ -1,6 +1,6 @@
 # clj-ipc
 
-A `node-ipc` compatible Clojure library for asynchronous inter-process communication.
+A [node-ipc](https://www.npmjs.com/package/node-ipc) compatible Clojure library for asynchronous inter-process communication.
 
 ## State
 
