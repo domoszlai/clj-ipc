@@ -15,8 +15,6 @@ A [node-ipc](https://www.npmjs.com/package/node-ipc) compatible Clojure library 
 
 It is released to [clojars.org](https://clojars.org).
 
-Dependency information:
-
 [![Clojars Project](https://img.shields.io/clojars/v/org.dlacko/clj-ipc.svg)](https://clojars.org/org.dlacko/clj-ipc)
 
 ## Usage
