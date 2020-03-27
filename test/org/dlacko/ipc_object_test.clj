@@ -1,8 +1,7 @@
-(ns org.dlacko.async-ipc-test
+(ns org.dlacko.ipc-object-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.core.async :as async]
-            [org.dlacko.async-ipc :as ipc]
-            [clj-time.core :as time]))
+            [org.dlacko.async-ipc :as ipc]))
 
 (def id "test")
 
@@ -50,19 +49,21 @@
         (ipc/stop-server server)
         (ipc/disconnect client-sock)))))
 
-(deftest test-echo-server
+(deftest test-object-in-out
   (let [server      (ipc/serve id)
         client-sock (ipc/connect-to id)
         server-sock (async/<!! (:connections server))]
 
     (try
-      (async/go-loop []
-        (when-let [input (async/<! (:in server-sock))]
-          (async/>! (:out server-sock) (str "ECHO: " input))
-          (recur)))
+      (async/>!! (:out client-sock) {:ping true
+                                     :pong false})
+      (is (= {:ping true
+              :pong false} (async/<!! (:in server-sock))))
 
-      (async/>!! (:out client-sock) "Hello, I'm Guybrush Threepwood")
-      (is (= "ECHO: Hello, I'm Guybrush Threepwood" (async/<!! (:in client-sock))))
+      (async/>!! (:out server-sock) {:ping false
+                                     :pong true})
+      (is (= {:ping false
+              :pong true} (async/<!! (:in client-sock))))
 
       (finally
         (ipc/stop-server server)

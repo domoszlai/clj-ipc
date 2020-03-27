@@ -5,15 +5,18 @@
 
 ;; Compatibe with https://github.com/RIAEvangelist/node-ipc/blob/master/example/unixWindowsSocket/rawBuffer/world.server.js
 
-(defn to-bytes
+(defn ->bytes
   [str]
   (bytes (byte-array (map (comp byte int) str))))
 
+(defn ->str
+  [data]
+  (apply str (map char data)))
+
 (defn -main []
   (let [{:keys [out in]} (ipc/connect-to "world" :rawBuffer true)]
-    (async/>!! out (to-bytes "hello"))
+    (async/>!! out (->bytes "hello"))
     (loop []
       (when-let [data (async/<!! in)]
-        (let [str (apply str (map char data))]
-          (log/info "got a message from world" str))
+        (log/info "got a message from world" (->str data))
         (recur)))))
