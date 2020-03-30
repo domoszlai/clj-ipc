@@ -81,9 +81,9 @@
   (.flush os))
 
 (defrecord AsyncSocket
-           [^Socket socket address in out])
+           [^Socket socket address in out error])
 (defrecord AsyncSocketServer
-           [^ServerSocket server address connections])
+           [^ServerSocket server address connections error])
 
 (defn disconnect [{:keys [in out socket address] :as this}]
   (log/info "Closing async socket client on address" address)
@@ -95,14 +95,19 @@
     (try (.shutdownOutput socket) (catch Exception _)))
   (when-not (.isClosed socket)
     (try (.close socket) (catch Exception _)))
-  (assoc this :socket nil :in nil :out nil))
+  (assoc this :socket nil :in nil :out nil :error nil))
 
 (defn- init-async-socket [^Socket socket address]
   (let [^InputStream is (io/input-stream socket)
         ^OutputStream os (io/output-stream socket)
         in-ch (async/chan)
         out-ch (async/chan)
-        public-socket (map->AsyncSocket {:socket socket :address address :in in-ch :out out-ch})]
+        error-ch (async/chan)
+        public-socket (map->AsyncSocket {:socket socket
+                                         :address address
+                                         :in in-ch
+                                         :out out-ch
+                                         :error error-ch})]
 
     (let [read-msg (if (:rawBuffer config)
                      #(socket-read-bytes is)
@@ -112,7 +117,7 @@
           (let [msg (try
                       (read-msg)
                       (catch SocketException e
-                        (log/error (str "Error occured during read on address " address) e)))]
+                        (async/>!! error-ch e)))]
             (if-not msg
               ; If conns is closed, shutdown was explicit by disconnect
               (when-not (clojure.core.async.impl.protocols/closed? in-ch)
@@ -130,7 +135,7 @@
                 (socket-write-bytes os msg)
                 (socket-write-object os msg))
               (catch SocketException e
-                (log/error (str "Error occured during write on address " address) e)
+                (async/>!! error-ch e)
                 (disconnect public-socket)))
             (recur)))))
 
@@ -160,7 +165,7 @@
     (try
       (.close server)
       (catch Exception _))
-    (assoc this :server nil :connections nil)))
+    (assoc this :server nil :connections nil :error nil)))
 
 (defn serve
   "Used for connecting as a client to local Unix Sockets and Windows Sockets.
@@ -171,11 +176,13 @@
     (let [unix-socket-path (make-path id)
           socket-file (File. unix-socket-path)
           java-server (AFUNIXServerSocket/newInstance)
-          conns (async/chan)
+          conns-ch (async/chan)
+          error-ch (async/chan)
           public-server (map->AsyncSocketServer
                          {:address     unix-socket-path
-                          :connections conns
-                          :server      java-server})]
+                          :connections conns-ch
+                          :server      java-server
+                          :error       error-ch})]
 
       (.bind java-server (AFUNIXSocketAddress. socket-file))
 
@@ -186,12 +193,12 @@
           (when
            (try
              ; >!! returns true if succeeds
-             (async/>!! conns
+             (async/>!! conns-ch
                         (init-async-socket (.accept java-server) unix-socket-path))
              (catch SocketException e
                ; If conns is closed, shutdown was explicit by stop-server
-               (when-not (clojure.core.async.impl.protocols/closed? conns)
-                 (log/error "Error occured on the server" e)
+               (when-not (clojure.core.async.impl.protocols/closed? conns-ch)
+                 (async/>!! error-ch e)
                  (try
                    (stop-server public-server)
                    (catch Exception _)))))
