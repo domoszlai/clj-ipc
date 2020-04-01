@@ -114,16 +114,22 @@
                      (partial socket-read-object (io/reader is)))]
       (async/thread
         (loop []
-          (let [msg (try
-                      (read-msg)
-                      (catch SocketException e
-                        (async/>!! error-ch e)))]
-            (if-not msg
+          (let [[close?, msg] (try
+                                (let [msg (read-msg)]
+                                  [(nil? msg), msg])
+                                (catch SocketException e
+                                  (async/>!! error-ch e)
+                                  [true, nil])
+                                (catch Exception e
+                                  (async/>!! error-ch e)
+                                  [false, nil]))]
+            (if close?
               ; If conns is closed, shutdown was explicit by disconnect
               (when-not (clojure.core.async.impl.protocols/closed? in-ch)
                 (disconnect public-socket))
               (do
-                (async/>!! in-ch msg)
+                (when msg
+                  (async/>!! in-ch msg))
                 (recur)))))))
 
     (async/thread
