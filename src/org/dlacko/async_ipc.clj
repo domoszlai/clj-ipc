@@ -216,7 +216,8 @@
                  (async/>!! error-ch e)
                  (try
                    (stop-server public-server)
-                   (catch Exception _)))))
+                   (catch Exception e
+                     (async/>!! error-ch e))))))
             (recur))))
 
       public-server)))
