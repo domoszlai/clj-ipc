@@ -214,7 +214,9 @@
                ; If conns is closed, shutdown was explicit by stop-server
                (when-not (clojure.core.async.impl.protocols/closed? conns-ch)
                  (async/>!! error-ch e)
-                 (stop-server public-server))))
+                 (stop-server public-server))
+               ; stop recurring
+               false))
             (recur))))
 
       public-server)))
