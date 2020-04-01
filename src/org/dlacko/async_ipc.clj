@@ -101,6 +101,7 @@
     (try (.close socket)
          (catch Exception e
            (async/>!! error e))))
+  (async/close! error)
   (assoc this :socket nil :in nil :out nil :error nil))
 
 (defn- init-async-socket [^Socket socket address]
