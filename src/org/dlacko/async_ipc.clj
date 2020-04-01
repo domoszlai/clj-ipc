@@ -85,16 +85,22 @@
 (defrecord AsyncSocketServer
            [^ServerSocket server address connections error])
 
-(defn disconnect [{:keys [in out socket address] :as this}]
+(defn disconnect [{:keys [in out socket address error] :as this}]
   (log/info "Closing async socket client on address" address)
   (async/close! in)
   (async/close! out)
   (when-not (.isInputShutdown socket)
-    (try (.shutdownInput socket) (catch Exception _)))
+    (try (.shutdownInput socket)
+         (catch Exception e
+           (async/>!! error e))))
   (when-not (.isOutputShutdown socket)
-    (try (.shutdownOutput socket) (catch Exception _)))
+    (try (.shutdownOutput socket)
+         (catch Exception e
+           (async/>!! error e))))
   (when-not (.isClosed socket)
-    (try (.close socket) (catch Exception _)))
+    (try (.close socket)
+         (catch Exception e
+           (async/>!! error e))))
   (assoc this :socket nil :in nil :out nil :error nil))
 
 (defn- init-async-socket [^Socket socket address]
@@ -164,13 +170,15 @@
 (defn server-running? [{:keys [^ServerSocket server]}]
   (and server (not (.isClosed server))))
 
-(defn stop-server [{:keys [^ServerSocket server connections address] :as this}]
+(defn stop-server [{:keys [^ServerSocket server connections address error] :as this}]
   (when (server-running? this)
     (log/info "Stopping async socket server on address" address)
     (async/close! connections)
     (try
       (.close server)
-      (catch Exception _))
+      (catch Exception e
+        (async/>!! error e)))
+    (async/close! error)
     (assoc this :server nil :connections nil :error nil)))
 
 (defn serve
